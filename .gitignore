@@ -1,0 +1,29 @@
+# Machine-specific configuration — never commit this
+.env
+.env.local
+
+# Model files — large binaries, downloaded per Setup step 6
+models/*
+!models/.gitkeep
+
+# Runtime scratch directories
+audio/*
+!audio/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Leftover from a removed debug logging path — safe to ignore if present
+debug_session.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Editor/OS cruft
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

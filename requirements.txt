@@ -1,0 +1,43 @@
+# =============================================================================
+# Local Voice Assistant — Python Dependencies
+# =============================================================================
+# Requires Python 3.10+
+#
+# NOT included below — these are separate, external installs (see README.md):
+#   - whisper.cpp   compiled C++ binary, built from source with Vulkan support
+#   - Ollama        standalone local LLM server (https://ollama.com)
+#   - espeak-ng     system-level dependency required by Kokoro for
+#                   out-of-dictionary word fallback phonemization
+#
+# Install with:
+#   pip install -r requirements.txt
+# =============================================================================
+
+# ---- Core -------------------------------------------------------------------
+numpy>=1.26.0
+# If you hit onnxruntime/openwakeword compatibility errors on install,
+# pin this to numpy<2.0 — some pinned transitive deps haven't caught up yet.
+python-dotenv>=1.0.1
+
+# ---- Audio I/O ----------------------------------------------------------
+sounddevice>=0.4.6
+soundfile>=0.12.1
+
+# ---- VAD / Wake Word ------------------------------------------------------
+# Both run on CPU via onnxruntime's CPUExecutionProvider by design, keeping
+# the GPU free for whisper.cpp and Ollama.
+onnxruntime>=1.17.0
+openwakeword>=0.6.0
+
+# ---- Text-to-Speech -------------------------------------------------------
+kokoro>=0.9.4
+torch>=2.2.0
+# ^ Kokoro dependency. Install the CPU-only wheel explicitly — see README.md.
+#   The default `pip install torch` can pull multi-GB CUDA runtime binaries
+#   you don't need on AMD/Vulkan hardware.
+pyttsx3>=2.90
+# ^ Automatic fallback engine, used only if Kokoro fails to load.
+
+# ---- LLM Client -------------------------------------------------------------
+httpx>=0.27.0
+# ^ Async streaming client for the local Ollama HTTP API.
