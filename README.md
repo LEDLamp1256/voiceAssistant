@@ -8,6 +8,8 @@ language model inference, and text-to-speech all run on your own hardware.
 Say "Hey Jarvis," ask a question, get a spoken answer back — while a game
 keeps rendering frames on the same machine.
 
+Previous commits are on deprecated repo due to bad git management. 
+
 ---
 
 ## How It Works
