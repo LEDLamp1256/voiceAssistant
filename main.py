@@ -768,7 +768,8 @@ async def _startup() -> None:
     Initialise all subsystems before entering the main loop.
 
     Initialisation order is mandatory:
-      1. cfg.validate() — path checks; non-fatal, logs errors only.
+      1. cfg.validate() — creates audio/models/logs directories if
+         missing, then runs non-fatal path checks (logs errors only).
       2. vad.initialise() — loads Silero ONNX (~1.8 MB) + optional OWW model.
       3. tts.initialise() — loads Kokoro-82M on CPU or pyttsx3 fallback.
 

@@ -335,15 +335,36 @@ class AssistantConfig:
 
     def validate(self) -> None:
         """
-        Sanity-check critical paths at startup. Logs warnings rather
-        than raising so the assistant can still boot in a degraded state
-        (e.g. missing wake word model is non-fatal).
+        Ensure every project-managed directory exists, then sanity-check
+        critical paths at startup. Logs warnings rather than raising for
+        the file checks, so the assistant can still boot in a degraded
+        state (e.g. missing wake word model is non-fatal) — but directory
+        creation itself is unconditional and silent on success, since an
+        empty directory is never a reason to degrade anything.
+
+        Directory creation runs first and is required for a "clone and
+        run" experience: git does not track empty directories, so
+        audio/, models/, and logs/ do not exist on a fresh clone until
+        something creates them. Every field in PathConfig is created here,
+        via mkdir(parents=True, exist_ok=True) — safe to call even if a
+        directory already exists, and safe to call every startup, every
+        time, unconditionally.
+
+        This intentionally does NOT create parent directories for
+        whisper.bin_path or whisper.model_path: those point at files the
+        user must supply themselves (a compiled binary, a downloaded
+        model), and creating an empty folder there wouldn't make either
+        one exist — the existence checks below still correctly report
+        them as missing either way.
 
         Call once from main.py after init_logging().
         """
         # Import here to avoid circular dependency at module load time.
         from src.logger import get_logger
         log = get_logger(__name__)
+
+        for directory in (self.paths.audio_dir, self.paths.models_dir, self.paths.logs_dir):
+            directory.mkdir(parents=True, exist_ok=True)
 
         if not self.whisper.bin_path.exists():
             log.error(
