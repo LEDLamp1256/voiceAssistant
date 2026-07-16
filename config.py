@@ -291,6 +291,35 @@ class TTSConfig:
 
 
 # ---------------------------------------------------------------------------
+# Sub-config: SFX (wake-word confirmation chirp)
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class SFXConfig:
+    """
+    Wake-word confirmation chirp settings.
+
+    enabled
+        If False, sfx.initialise() is a no-op and play_ping() never
+        plays anything. Lets the feature be turned off entirely from
+        .env without touching code.
+
+    chirp_path
+        Path to a short (<300ms recommended) WAV file played the instant
+        the wake word fires. A missing file degrades to "chirp disabled,
+        logged once" rather than a fail-fast crash — unlike Silero's or
+        whisper.cpp's model files, this is cosmetic UX, not a functional
+        dependency of the pipeline.
+    """
+
+    enabled: bool = field(
+        default_factory=lambda: _env_str("WAKE_CHIRP_ENABLED", "true").lower() == "true"
+    )
+    chirp_path: Path = field(
+        default_factory=lambda: _env_path("WAKE_CHIRP_PATH", "./assets/wake_chirp.wav")
+    )
+
+
+# ---------------------------------------------------------------------------
 # Sub-config: Paths
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -331,19 +360,41 @@ class AssistantConfig:
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     vad: VADConfig = field(default_factory=VADConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
+    sfx: SFXConfig = field(default_factory=SFXConfig)
     paths: PathConfig = field(default_factory=PathConfig)
 
     def validate(self) -> None:
         """
-        Sanity-check critical paths at startup. Logs warnings rather
-        than raising so the assistant can still boot in a degraded state
-        (e.g. missing wake word model is non-fatal).
+        Ensure every project-managed directory exists, then sanity-check
+        critical paths at startup. Logs warnings rather than raising for
+        the file checks, so the assistant can still boot in a degraded
+        state (e.g. missing wake word model is non-fatal) — but directory
+        creation itself is unconditional and silent on success, since an
+        empty directory is never a reason to degrade anything.
+
+        Directory creation runs first and is required for a "clone and
+        run" experience: git does not track empty directories, so
+        audio/, models/, and logs/ do not exist on a fresh clone until
+        something creates them. Every field in PathConfig is created here,
+        via mkdir(parents=True, exist_ok=True) — safe to call even if a
+        directory already exists, and safe to call every startup, every
+        time, unconditionally.
+
+        This intentionally does NOT create parent directories for
+        whisper.bin_path or whisper.model_path: those point at files the
+        user must supply themselves (a compiled binary, a downloaded
+        model), and creating an empty folder there wouldn't make either
+        one exist — the existence checks below still correctly report
+        them as missing either way.
 
         Call once from main.py after init_logging().
         """
         # Import here to avoid circular dependency at module load time.
         from src.logger import get_logger
         log = get_logger(__name__)
+
+        for directory in (self.paths.audio_dir, self.paths.models_dir, self.paths.logs_dir):
+            directory.mkdir(parents=True, exist_ok=True)
 
         if not self.whisper.bin_path.exists():
             log.error(

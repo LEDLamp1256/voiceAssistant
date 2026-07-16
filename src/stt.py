@@ -85,6 +85,20 @@ _TIMESTAMP_RE: Final[re.Pattern[str]] = re.compile(
     r"\[\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}\]\s*"
 )
 
+# whisper.cpp emits a bracketed/parenthesised placeholder instead of an
+# empty string when a segment is processed but judged to contain no
+# speech — the exact wording varies by model/version ("[BLANK AUDIO]",
+# "[SILENCE]", "(silence)", "[NO SPEECH]", etc.), so this matches the
+# general shape (entirely-bracketed or entirely-parenthesised, letters/
+# spaces only) rather than a single hardcoded literal. Applied to the
+# WHOLE cleaned transcript, not as a substring strip mid-sentence, so a
+# real utterance that happens to end with e.g. "(laughs)" is untouched —
+# only a transcript that is ENTIRELY one of these placeholders collapses
+# to "".
+_NON_SPEECH_PLACEHOLDER_RE: Final[re.Pattern[str]] = re.compile(
+    r"^[\[\(][A-Za-z_ ]+[\]\)]$"
+)
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -126,14 +140,37 @@ def _parse_transcript(raw: str) -> str:
     and strips leading/trailing whitespace. Used on the contents of the
     -otxt sidecar file (see transcribe()), not stdout.
 
+    FIX [Blank-audio placeholder leak]: whisper.cpp does not always return
+    an empty string for a no-speech segment (e.g. a wake-word trigger
+    followed by silence within the pre-command grace period). It can
+    instead emit a literal placeholder token such as "[BLANK AUDIO]" —
+    non-empty, so it previously survived this function, then survived
+    main.py's `if not transcript:` guard (a truthy string), and was fed
+    straight into conversation history and on to the LLM/TTS GPU stages.
+    Collapsing it to "" HERE, at the single choke point every transcript
+    passes through, means that existing downstream guard now catches it
+    for free — no second guard clause needed in the orchestrator, and no
+    placeholder text ever reaches history or a GPU-bound stage.
+
     Args:
         raw: Raw text content, already decoded to str.
 
     Returns:
-        Clean transcript, or empty string if nothing remains.
+        Clean transcript, or empty string if nothing remains (including
+        when the only content was a non-speech placeholder token).
     """
     cleaned: str = _TIMESTAMP_RE.sub("", raw)
-    return " ".join(cleaned.split())
+    cleaned = " ".join(cleaned.split())
+
+    if _NON_SPEECH_PLACEHOLDER_RE.match(cleaned):
+        log.debug(
+            "STT_PARSE — non-speech placeholder token %r collapsed to "
+            "empty transcript",
+            cleaned,
+        )
+        return ""
+
+    return cleaned
 
 
 # ---------------------------------------------------------------------------

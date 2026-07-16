@@ -103,6 +103,7 @@ import src.vad as vad
 import src.stt as stt
 import src.llm as llm
 import src.tts as tts
+import src.sfx as sfx
 
 # ---------------------------------------------------------------------------
 # Logging — initialise before any module-level log calls.
@@ -548,6 +549,23 @@ async def _accumulate_stream(
 # Task C — Barge-in watchdog
 # ---------------------------------------------------------------------------
 
+def _on_barge_in_trigger() -> None:
+    """
+    Combined on_trigger for the barge-in watchdog's listen_for_speech()
+    call — vad.py accepts exactly one on_trigger callable, so both
+    side-effects that need to fire on the same detected frame (silencing
+    old TTS audio, and confirming the new wake word was heard) are
+    composed here rather than in vad.py itself.
+
+    tts.stop() runs first deliberately: it is the latency-critical action
+    (silencing self-audio within ~32 ms, per tts.py), while play_ping()
+    is cosmetic. Both are already individually documented as safe to call
+    from a synchronous, non-coroutine context.
+    """
+    tts.stop()
+    sfx.play_ping()
+
+
 async def _barge_in_watchdog() -> bytes:
     """
     Task C: Monitor for new speech while the pipeline is active.
@@ -555,6 +573,26 @@ async def _barge_in_watchdog() -> bytes:
     Calls vad.listen_for_speech(_audio_queue), which blocks asynchronously
     on the queue awaiting Silero-confirmed speech (with optional wake word
     gating). Returns the raw PCM segment of the new utterance.
+
+    FIX [Barge-in latency]: previously TTS playback was only interrupted
+    once this whole function RETURNED — i.e. once the entire new utterance
+    had already been captured (silence timeout or max-recording ceiling).
+    That meant old TTS audio kept playing through the wake word and the
+    ENTIRE new command before being cut off, not "the instant the wake
+    word is detected" as required. tts.stop is now passed as
+    on_trigger, which vad.listen_for_speech() invokes synchronously the
+    exact frame its internal state flips IDLE -> RECORDING_COMMAND — the
+    same frame the wake word fires — not when capture finishes. tts.stop()
+    itself is documented as thread-safe / callable from any context and
+    is what actually silences the persistent output stream (clears the
+    playback queue and in-flight chunk) within about one blocksize
+    (~32 ms). This is the ONLY call site that gets on_trigger: it's the
+    only listen_for_speech() call that runs concurrently with a pipeline
+    that might actually be playing TTS audio. pipeline_loop()'s idle-state
+    call (step 1, no active pipeline) is intentionally left without it —
+    nothing is playing to interrupt, and wiring it there would just add a
+    no-op tts.stop() call (and a misleading "TTS — interrupted" log line)
+    on every ordinary utterance.
 
     Cancellation (when pipeline finishes first) is received at the
     `await stream.get()` inside vad.listen_for_speech() — a clean await
@@ -564,7 +602,7 @@ async def _barge_in_watchdog() -> bytes:
         Raw 16-bit PCM bytes of the detected utterance.
     """
     log.debug("WATCHDOG — armed")
-    segment: bytes = await vad.listen_for_speech(_audio_queue)
+    segment: bytes = await vad.listen_for_speech(_audio_queue, on_trigger=_on_barge_in_trigger)
     log.info("WATCHDOG — barge-in detected (%d bytes)", len(segment))
     return segment
 
@@ -612,7 +650,9 @@ async def pipeline_loop() -> None:
                 log.info("PIPELINE — idle; waiting for speech...")
                 log.info("PIPELINE — Re-entering listen_for_speech...")
                 try:
-                    pcm_segment: bytes = await vad.listen_for_speech(_audio_queue)
+                    pcm_segment: bytes = await vad.listen_for_speech(
+                        _audio_queue, on_trigger=sfx.play_ping
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -768,7 +808,8 @@ async def _startup() -> None:
     Initialise all subsystems before entering the main loop.
 
     Initialisation order is mandatory:
-      1. cfg.validate() — path checks; non-fatal, logs errors only.
+      1. cfg.validate() — creates audio/models/logs directories if
+         missing, then runs non-fatal path checks (logs errors only).
       2. vad.initialise() — loads Silero ONNX (~1.8 MB) + optional OWW model.
       3. tts.initialise() — loads Kokoro-82M on CPU or pyttsx3 fallback.
 
@@ -792,6 +833,9 @@ async def _startup() -> None:
 
     log.info("STARTUP — loading TTS (Kokoro-82M / pyttsx3)...")
     await tts.initialise()          # CPU only; ~200 ms first load.
+
+    log.info("STARTUP — loading wake-word confirmation chirp...")
+    await sfx.initialise()          # CPU only; non-fatal if missing/disabled.
 
     log.info("STARTUP — all subsystems ready")
 
@@ -844,6 +888,7 @@ async def async_main() -> None:
         
         tts.shutdown_executor()
         vad.shutdown_executor()
+        sfx.shutdown_executor()
         
         log.info("MAIN — shutdown complete")
         return
@@ -927,6 +972,8 @@ async def async_main() -> None:
                 )
 
         tts.stop()  # Belt-and-suspenders: kill PortAudio if still active.
+
+        sfx.shutdown_executor()
 
         log.info("MAIN — shutting down executor")
         executor.shutdown(wait=True)  # wait=True: drain in-flight to_thread calls.
