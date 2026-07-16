@@ -103,6 +103,7 @@ import src.vad as vad
 import src.stt as stt
 import src.llm as llm
 import src.tts as tts
+import src.sfx as sfx
 
 # ---------------------------------------------------------------------------
 # Logging — initialise before any module-level log calls.
@@ -548,6 +549,23 @@ async def _accumulate_stream(
 # Task C — Barge-in watchdog
 # ---------------------------------------------------------------------------
 
+def _on_barge_in_trigger() -> None:
+    """
+    Combined on_trigger for the barge-in watchdog's listen_for_speech()
+    call — vad.py accepts exactly one on_trigger callable, so both
+    side-effects that need to fire on the same detected frame (silencing
+    old TTS audio, and confirming the new wake word was heard) are
+    composed here rather than in vad.py itself.
+
+    tts.stop() runs first deliberately: it is the latency-critical action
+    (silencing self-audio within ~32 ms, per tts.py), while play_ping()
+    is cosmetic. Both are already individually documented as safe to call
+    from a synchronous, non-coroutine context.
+    """
+    tts.stop()
+    sfx.play_ping()
+
+
 async def _barge_in_watchdog() -> bytes:
     """
     Task C: Monitor for new speech while the pipeline is active.
@@ -584,7 +602,7 @@ async def _barge_in_watchdog() -> bytes:
         Raw 16-bit PCM bytes of the detected utterance.
     """
     log.debug("WATCHDOG — armed")
-    segment: bytes = await vad.listen_for_speech(_audio_queue, on_trigger=tts.stop)
+    segment: bytes = await vad.listen_for_speech(_audio_queue, on_trigger=_on_barge_in_trigger)
     log.info("WATCHDOG — barge-in detected (%d bytes)", len(segment))
     return segment
 
@@ -632,7 +650,9 @@ async def pipeline_loop() -> None:
                 log.info("PIPELINE — idle; waiting for speech...")
                 log.info("PIPELINE — Re-entering listen_for_speech...")
                 try:
-                    pcm_segment: bytes = await vad.listen_for_speech(_audio_queue)
+                    pcm_segment: bytes = await vad.listen_for_speech(
+                        _audio_queue, on_trigger=sfx.play_ping
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -814,6 +834,9 @@ async def _startup() -> None:
     log.info("STARTUP — loading TTS (Kokoro-82M / pyttsx3)...")
     await tts.initialise()          # CPU only; ~200 ms first load.
 
+    log.info("STARTUP — loading wake-word confirmation chirp...")
+    await sfx.initialise()          # CPU only; non-fatal if missing/disabled.
+
     log.info("STARTUP — all subsystems ready")
 
 
@@ -865,6 +888,7 @@ async def async_main() -> None:
         
         tts.shutdown_executor()
         vad.shutdown_executor()
+        sfx.shutdown_executor()
         
         log.info("MAIN — shutdown complete")
         return
@@ -948,6 +972,8 @@ async def async_main() -> None:
                 )
 
         tts.stop()  # Belt-and-suspenders: kill PortAudio if still active.
+
+        sfx.shutdown_executor()
 
         log.info("MAIN — shutting down executor")
         executor.shutdown(wait=True)  # wait=True: drain in-flight to_thread calls.

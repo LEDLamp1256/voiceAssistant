@@ -291,6 +291,35 @@ class TTSConfig:
 
 
 # ---------------------------------------------------------------------------
+# Sub-config: SFX (wake-word confirmation chirp)
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class SFXConfig:
+    """
+    Wake-word confirmation chirp settings.
+
+    enabled
+        If False, sfx.initialise() is a no-op and play_ping() never
+        plays anything. Lets the feature be turned off entirely from
+        .env without touching code.
+
+    chirp_path
+        Path to a short (<300ms recommended) WAV file played the instant
+        the wake word fires. A missing file degrades to "chirp disabled,
+        logged once" rather than a fail-fast crash — unlike Silero's or
+        whisper.cpp's model files, this is cosmetic UX, not a functional
+        dependency of the pipeline.
+    """
+
+    enabled: bool = field(
+        default_factory=lambda: _env_str("WAKE_CHIRP_ENABLED", "true").lower() == "true"
+    )
+    chirp_path: Path = field(
+        default_factory=lambda: _env_path("WAKE_CHIRP_PATH", "./assets/wake_chirp.wav")
+    )
+
+
+# ---------------------------------------------------------------------------
 # Sub-config: Paths
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -331,6 +360,7 @@ class AssistantConfig:
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     vad: VADConfig = field(default_factory=VADConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
+    sfx: SFXConfig = field(default_factory=SFXConfig)
     paths: PathConfig = field(default_factory=PathConfig)
 
     def validate(self) -> None:
