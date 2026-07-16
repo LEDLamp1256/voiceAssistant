@@ -115,7 +115,7 @@ import time
 import functools
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -557,13 +557,42 @@ async def is_speech(audio_chunk: bytes) -> bool:
     return prob >= cfg.vad.threshold
 
 
-async def listen_for_speech(stream: "asyncio.Queue[bytes]") -> bytes:
+async def listen_for_speech(
+    stream: "asyncio.Queue[bytes]",
+    on_trigger: Optional["Callable[[], None]"] = None,
+) -> bytes:
     """
     Purpose:
         Asynchronously block until a complete speech segment has been
         captured, applying wake-word gating first if a wake-word model is
         loaded, then Silero-driven silence detection to determine when the
         segment ends.
+
+    Barge-in Callback Timing (on_trigger)
+    -----------------------------------------
+        FIX [Barge-in latency]: this function previously offered no signal
+        of ANY kind until it fully RETURNS — which only happens once the
+        entire utterance closes (silence timeout or the max-recording
+        ceiling). The caller's only hook was the return value, so anything
+        gated on "the user started talking" (e.g. main.py calling
+        tts.stop() to interrupt playback) was necessarily delayed by the
+        caller's own recording+silence window, letting old TTS audio keep
+        playing through the wake word AND the entire new command before
+        being cut off — the opposite of an instant barge-in.
+
+        on_trigger, if provided, is called synchronously the instant this
+        function's internal state transitions IDLE -> RECORDING_COMMAND —
+        i.e. the same frame the wake word fires (gated mode) or the same
+        frame Silero first confirms speech (open mode) — not when the
+        segment finishes being captured. It is a plain synchronous
+        callable (not a coroutine): main.py passes tts.stop, which is
+        itself documented as thread-safe / callable from any context and
+        does the actual audio-silencing work (clears the playback queue
+        and the in-flight chunk so the persistent output stream goes
+        silent within one blocksize, ~32 ms). Any exception raised by
+        on_trigger is caught and logged here rather than allowed to
+        propagate — a broken interrupt hook must never take down VAD's
+        own state machine.
 
     Internal Mechanism:
         Implements the module's state machine:
@@ -616,6 +645,10 @@ async def listen_for_speech(stream: "asyncio.Queue[bytes]") -> bytes:
         stream: asyncio.Queue fed by the microphone capture loop in
                 main.py. Each item must be exactly _FRAME_SAMPLES * 2 raw
                 16-bit PCM bytes.
+        on_trigger: Optional synchronous callable invoked exactly once,
+                    the instant IDLE -> RECORDING_COMMAND fires (see
+                    "Barge-in Callback Timing" above). None (the default)
+                    preserves the prior no-callback behavior exactly.
 
     Returns:
         Raw 16-bit PCM bytes of the captured speech segment.
@@ -699,6 +732,14 @@ async def listen_for_speech(stream: "asyncio.Queue[bytes]") -> bytes:
                 _command_confirmed = False
                 _pcm_buffer.append(chunk)
                 log.info("VAD — wake word triggered, instantly recording...")
+                if on_trigger is not None:
+                    try:
+                        on_trigger()
+                    except Exception:
+                        log.exception(
+                            "VAD — on_trigger callback raised; continuing "
+                            "(barge-in interrupt hook must never break VAD)"
+                        )
             continue
 
         frame_f32 = _pcm16_to_f32(chunk)
@@ -734,6 +775,14 @@ async def listen_for_speech(stream: "asyncio.Queue[bytes]") -> bytes:
                     prob,
                     cfg.vad.threshold,
                 )
+                if on_trigger is not None:
+                    try:
+                        on_trigger()
+                    except Exception:
+                        log.exception(
+                            "VAD — on_trigger callback raised; continuing "
+                            "(barge-in interrupt hook must never break VAD)"
+                        )
             if not _command_confirmed:
                 log.debug("VAD — command speech confirmed, silence-close threshold now snappy (800ms)")
             _command_confirmed = True
