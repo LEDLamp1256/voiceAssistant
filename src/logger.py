@@ -1,8 +1,4 @@
 """
-src/logger.py — Centralized Logging Configuration
-==================================================
-Single source of truth for all logging in the voice assistant.
-
 Architecture notes
 ------------------
 * QueueHandler + QueueListener  — the critical non-blocking design.

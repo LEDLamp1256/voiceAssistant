@@ -1,8 +1,4 @@
 """
-config.py — Centralized Configuration
-======================================
-Single source of truth for every tunable in the voice assistant.
-
 Design principles
 -----------------
 * dataclasses with frozen=True — instances are immutable after creation,

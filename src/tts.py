@@ -1,7 +1,4 @@
 """
-tts.py — Asynchronous Text-to-Speech with Barge-in Support
-============================================================
-
 Public Interface
 ------------------
     await tts.initialise()                # once, at startup

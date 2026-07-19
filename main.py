@@ -1,6 +1,4 @@
 """
-main.py — Voice Assistant Orchestrator (Production Build)
-=========================================================
 Entry point and async event-loop conductor. Wires together:
     vad  →  stt  →  llm  →  tts
 

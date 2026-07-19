@@ -1,11 +1,4 @@
 """
-src/sfx.py — Wake-Word Confirmation Chirp
-============================================
-Public interface:
-    await sfx.initialise()   # once, at startup
-    sfx.play_ping()          # thread-safe, synchronous, fire-and-forget
-    sfx.shutdown_executor()  # once, at shutdown
-
 Why this exists
 ----------------
 vad.py's listen_for_speech() calls on_trigger() synchronously the exact

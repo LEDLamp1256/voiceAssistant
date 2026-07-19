@@ -1,6 +1,3 @@
-# =============================================================================
-# Local Voice Assistant — Python Dependencies
-# =============================================================================
 # Requires Python 3.10+
 #
 # NOT included below — these are separate, external installs (see README.md):

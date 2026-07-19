@@ -1,5 +1,4 @@
 """
-src/llm.py — Async Streaming LLM Connector (Ollama)
 =====================================================
 Public interface:
     async def stream_response(
