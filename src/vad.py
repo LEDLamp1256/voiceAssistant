@@ -1,7 +1,4 @@
 """
-vad.py — Voice Activity Detection & Wake Word Gating
-=====================================================
-
 Public Interface
 -----------------
     await vad.initialise()                       # once, at startup

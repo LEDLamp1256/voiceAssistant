@@ -1,6 +1,4 @@
 """
-stt.py — Whisper.cpp Subprocess Manager
-========================================
 Owns the entire lifecycle of a single transcription request:
 
     1.  Receives a Path to a temporary WAV file written by the VAD consumer.

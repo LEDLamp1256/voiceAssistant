@@ -1,12 +1,10 @@
-# Hey Jarvis — A Local, GPU-Accelerated Voice Assistant
+# Hey Jarvis — A Local Voice Assistant
 
 A fully local, wake-word-triggered voice assistant designed to run in the
-background **while gaming**, without stealing the CPU or GPU headroom the
-game needs. No cloud APIs, no accounts, no telemetry — speech recognition,
-language model inference, and text-to-speech all run on your own hardware.
+background. No API, just speech recognition, language model inference, 
+and text-to-speech all run on your own hardware.
 
-Say "Hey Jarvis," ask a question, get a spoken answer back — while a game
-keeps rendering frames on the same machine.
+Say "Hey Jarvis," ask a question, get a spoken answer back.
 
 Previous commits are on deprecated repo due to bad git management. 
 
@@ -14,55 +12,38 @@ Previous commits are on deprecated repo due to bad git management.
 
 ## How It Works
 
-The assistant is built around a two-stage gating pipeline and an `asyncio`
-orchestrator, with each expensive component isolated onto its own dedicated
-thread pool so that one slow operation can never stall another:
+The assistant is built around a two stage gating and `asyncio`, with a 
+light weight wake word detector followed by the more resource intensive
+voice activity detection, transcription, and language model processing:
 
 ```
-  mic audio ──▶ [ Wake Word (OpenWakeWord) ] ──▶ [ VAD (Silero) ] ──▶ speech segment
-                        CPU, dedicated pool          CPU, dedicated pool
-                                                              │
-                                                              ▼
-                                                   [ whisper.cpp — STT ]
-                                                     GPU (Vulkan), subprocess
-                                                              │
-                                                              ▼
-                                                     [ Ollama — LLM ]
-                                                     GPU, HTTP streaming
-                                                              │
-                                                              ▼
-                                                   [ Kokoro / pyttsx3 — TTS ]
-                                                     CPU, dedicated pool
-                                                              │
-                                                              ▼
-                                              persistent PortAudio output stream
+Mic Capture → Wake Word ("Hey Jarvis") → VAD (speech end detected)
+    → STT (whisper.cpp / Vulkan) → LLM (Ollama) → TTS (Kokoro) → Playback
+                                        ↑
+                          VAD barge-in watchdog (runs concurrently,
+                          can interrupt at any point after STT)
 ```
 
 **Design principles:**
 
-- **GPU offloading, deliberately.** The CPU is busy running the game, so
-  transcription (whisper.cpp) and language model inference (Ollama) are the
-  only stages that touch the GPU, via Vulkan — no CUDA anywhere in this
-  stack. Wake-word detection and VAD stay on the CPU on purpose: they're
-  cheap, and keeping them off the GPU leaves that headroom for the two
-  stages that actually need it.
-- **Non-blocking by construction.** Every blocking call (ONNX inference,
-  TTS synthesis, subprocess I/O) is routed through a *dedicated*
+- **GPU offloading.** transcription (whisper.cpp) and language model
+  inference (Ollama) are the only stages that touch the GPU, via
+  Vulkan — no CUDA anywhere in this stack. Wake-word detection and VAD
+  stay on the CPU on purpose: they're cheap, and keeping them off the GPU
+  leaves that headroom for the two stages that actually need it.
+- **Non-blocking architecture.** High computer/blocking calls (ONNX inference,
+  TTS synthesis, subprocess I/O) are routed through a *dedicated*
   `ThreadPoolExecutor` for its own module rather than `asyncio`'s shared
-  default executor. A slow LLM response can't make the assistant deaf to a
-  wake word; a stalled TTS call can't do it either.
-- **A two-tier VAD state machine.** Wake-word detection gates entry into
+  default executor. Decoupling prevents bottlenecks from affecting input
+  sensitivity under load.
+- **Two stage VAD gating.** Wake-word detection gates entry into
   "recording" state; Silero VAD then decides when you've stopped talking,
-  using a longer silence threshold before your command is confirmed and a
-  snappier one after, so turn-taking feels responsive without cutting you
-  off mid-sentence.
-- **Startup validation, mixed by design.** `config.py` checks every
-  critical path at boot: a missing Silero VAD model is a hard failure
-  (the assistant can't function at all without it), while a missing
-  whisper.cpp binary/model or wake-word model is logged as an error or
-  warning and the assistant still starts — the latter can run in a
-  reduced mode (e.g. no wake-word gating) rather than refusing to boot
-  over something non-essential.
+  using a longer silence threshold before your command is confirmed.
+- **Startup validation.** `config.py` checks every critical path at boot:
+  a missing Silero VAD model is a hard failure, while a missing whisper.cpp
+  binary/model or wake-word model is logged as an error or warning and the
+  assistant still starts — the latter can run in a reduced mode (e.g. no
+  wake-word gating) rather than refusing to boot over something non-essential.
 
 ---
 
@@ -80,7 +61,7 @@ thread pool so that one slow operation can never stall another:
 | **A working microphone** | |
 
 > **A note on OS support:** this has been developed and tested on Windows
-> 11. The Python side has POSIX-aware path handling and should run on
+> 10. The Python side has POSIX-aware path handling and should run on
 > Linux (PortAudio and whisper.cpp's Vulkan backend both support it), but
 > it hasn't been exercised end-to-end there — issues/PRs welcome.
 
